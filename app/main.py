@@ -1,15 +1,15 @@
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 import psutil
-import os
 from concurrent.futures import ThreadPoolExecutor
 import concurrent.futures
-import pwd
 import subprocess
 import app.auth as auth
 import socket
 import ipaddress
+import logging
 
 app = FastAPI(dependencies=[Depends(auth.verify_api_key)], docs_url=None, redoc_url=None, openapi_url=None)
+logger = logging.getLogger(__name__)
 
 def find_hosts():
     cmd = psutil.net_if_addrs()
@@ -43,23 +43,15 @@ def ping():
             rs = future.result()
             if rs.returncode == 0:
                 ip_list.append(future_to_ip[future])
-    return(ip_list)
-
-def shutdown():
-    os.system('clear')
-    os.system('systemctl poweroff')
+    return(ip_list)    
 
 @app.get("/")
 def read_root():
     return{"Hello": "World"}
 
-@app.get('/network')
-def network():
-    return{'network': psutil.net_if_addrs()}
-
 @app.get("/system/cpu")
 def read_cpu():
-    return{"cpu_percent": psutil.cpu_percent(interval=0.0), "cpu_cores": psutil.cpu_count(True)}
+    return{"cpu_percent": psutil.cpu_percent(interval=0.5), "cpu_cores": psutil.cpu_count(True)}
 
 @app.get("/system/ram")
 def read_ram():
@@ -69,20 +61,21 @@ def read_ram():
 def read_disk():
     return{"disk": psutil.disk_usage('/')}
 
-@app.get("/system/users")
-def read_users():
-    cmd = ['uptime', '-p']
-    uptime = subprocess.check_output(cmd).decode("utf-8").strip("\n")
-    return{"users": pwd.getpwuid(1000).pw_name, "uid": pwd.getpwuid(1000).pw_uid, "uptime":uptime}
-
 @app.get("/system/network/devices")
 def read_network():
-    return{"dispositivos": ping()}
+    return{"devices": ping()}
 
 @app.post('/system/shutdown')
 def shutdown_system():
-    shutdown()
-    return 'PC desligado'
+    try:
+        subprocess.run(['systemctl', 'poweroff'], check=True)
+        return 'Desligamento solicitado'
+    except FileNotFoundError:
+        logger.exception('systemctl não encontrado')
+        raise HTTPException(500, 'Erro ao desligar')
+    except subprocess.CalledProcessError as e:
+        logger.exception(f'systemctl falhou {e.returncode}')
+        raise HTTPException(500, 'Erro ao desligar')
 
 @app.get('/system/processes')
 def get_processes():
